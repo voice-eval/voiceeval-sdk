@@ -90,4 +90,4 @@ async def ingest_traces(request: Request, api_key_hash: str = Depends(get_api_ke
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
