@@ -852,7 +852,7 @@ wheels = [
 ]
 
 [[package]]
-name = "voiceeval"
+name = "voiceeval-sdk"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

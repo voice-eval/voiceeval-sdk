@@ -10,7 +10,7 @@ load_dotenv()
 def main():
     # 1. Initialize Client pointing to local proxy
     client = Client(
-        api_key="test_key", 
+        api_key="cejIMcbgSuRb9T6zwrWWkIdiFH6h", 
         base_url="http://localhost:8000/v1/traces"
     )
     print("Client initialized.")

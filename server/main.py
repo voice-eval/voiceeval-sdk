@@ -4,28 +4,51 @@ import httpx
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-app = FastAPI()
-security = HTTPBearer()
+import hashlib
+import json
+from pathlib import Path
+from contextlib import asynccontextmanager
 
-# Mock Database
-# In production, this would be a Postgres/Redis lookup
-USER_DB = {
-    "test_key": {
-        "langfuse_public": "",
-        "langfuse_secret": "",
-        "langfuse_host": ""
-    }
-}
+# Load Keys from JSON file
+KEYS_FILE = Path(__file__).parent / "api_keys.json"
+USER_DB = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global USER_DB
+    if KEYS_FILE.exists():
+        try:
+            with open(KEYS_FILE, "r") as f:
+                USER_DB = json.load(f)
+            print(f"INFO: Loaded {len(USER_DB)} API keys from {KEYS_FILE}")
+        except Exception as e:
+            print(f"ERROR: Failed to load API keys: {e}")
+    else:
+        print(f"WARNING: No API keys file found at {KEYS_FILE}")
+    yield
+
+app = FastAPI(lifespan=lifespan)
+security = HTTPBearer()
 
 async def get_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
-    if token not in USER_DB:
+    # Verify hash
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    
+    if token_hash not in USER_DB:
         raise HTTPException(status_code=403, detail="Invalid API Key")
-    return token
+    
+    # Return the hash so we can lookup config in USER_DB
+    return token_hash
+
+@app.get("/v1/auth/validate")
+async def validate_auth(api_key_hash: str = Depends(get_api_key)):
+    """Verifies the API key is valid."""
+    return {"status": "valid"}
 
 @app.post("/v1/traces")
-async def ingest_traces(request: Request, api_key: str = Depends(get_api_key)):
-    config = USER_DB[api_key]
+async def ingest_traces(request: Request, api_key_hash: str = Depends(get_api_key)):
+    config = USER_DB[api_key_hash]
     lf_public = config["langfuse_public"]
     lf_secret = config["langfuse_secret"]
     lf_host = config["langfuse_host"]

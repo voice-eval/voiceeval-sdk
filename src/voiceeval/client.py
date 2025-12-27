@@ -6,6 +6,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry import trace
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,45 @@ class Client:
             raise ValueError("API Key is required. Set VOICE_EVAL_API_KEY env var or pass in __init__.")
             
         self.ingest_url = base_url
+        
+        # Validate API Key
+        self._validate_api_key()
+        
         self.enable_observability()
+
+    def _validate_api_key(self):
+        """Checks if the API key is valid by calling the server."""
+        # Assume base_url ends with /v1/traces or similar
+        # Construct validation URL: replace /traces with /auth/validate, or just appending to root
+        # Ideally, we'd have a clean base URL. For now, hacky replacement to match default behaviour.
+        
+        if "/v1/traces" in self.ingest_url:
+            validate_url = self.ingest_url.replace("/v1/traces", "/v1/auth/validate")
+        else:
+            # Fallback or smart guess? 
+            # If user passes just http://localhost:8000, we might need /v1/auth/validate
+            # If user passes http://localhost:8000/v1, we need /auth/validate
+            # For this task, let's assume the standard structure.
+             validate_url = self.ingest_url.replace("/traces", "/auth/validate") # Attempt to handle /v1/traces -> /v1/auth/validate
+
+        try:
+            response = httpx.get(
+                validate_url, 
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=5.0
+            )
+            if response.status_code == 403:
+                raise ValueError("Invalid API Key provided to VoiceEval Client.")
+            elif response.status_code == 404:
+                logger.warning("VoiceEval Server does not support API key validation (Endpoint not found). Ensure server is updated.")
+            elif response.status_code != 200:
+                logger.warning(f"Could not validate API key (Status {response.status_code}). Proceeding, but exports may fail.")
+        except Exception as e:
+            # Don't crash for network errors, just warn, unless it's explicitly Invalid API Key error raised above
+            if "Invalid API Key" in str(e):
+                raise e
+            logger.warning(f"Failed to reach VoiceEval server for validation: {e}")
+
 
     def enable_observability(self):
         """Auto-configures OTel to send data to VoiceEval Proxy and instruments common libraries."""
