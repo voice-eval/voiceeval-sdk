@@ -11,9 +11,9 @@ security = HTTPBearer()
 # In production, this would be a Postgres/Redis lookup
 USER_DB = {
     "test_key": {
-        "langfuse_public": "pk-lf-2753cba8-1965-4a02-ae14-84d119f5cb76",
-        "langfuse_secret": "sk-lf-b9488264-e94e-4d1f-8e40-4ed7b8ca5b4c",
-        "langfuse_host": "https://us.cloud.langfuse.com"
+        "langfuse_public": "",
+        "langfuse_secret": "",
+        "langfuse_host": ""
     }
 }
 
