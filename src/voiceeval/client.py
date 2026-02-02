@@ -129,6 +129,15 @@ class Client:
         # Manual instrumentation for LiveKit
         self._instrument_livekit(provider)
 
+    def flush(self):
+        """
+        Force flush all buffered traces to the backend.
+        Useful for ensuring data is sent before application shutdown.
+        """
+        provider = trace.get_tracer_provider()
+        if hasattr(provider, "force_flush"):
+            provider.force_flush()
+
 if __name__ == "__main__":
     # Configure logging to see output when running this script directly
     # logging.basicConfig(level=logging.DEBUG)
