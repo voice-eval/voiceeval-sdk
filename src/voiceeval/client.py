@@ -71,8 +71,21 @@ class Client:
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
         
-        # Auto-instrument common libraries
-        self._instrument_libraries()
+        # Instrument all libraries (including LiveKit)
+        self._instrument_libraries(provider)
+
+    def _instrument_livekit(self, provider):
+        """
+        Attempts to configure LiveKit Agents to use the same TracerProvider.
+        """
+        try:
+            from livekit.agents import telemetry
+            telemetry.set_tracer_provider(provider)
+            logger.debug("Successfully instrumented LiveKit Agents.")
+        except ImportError:
+            logger.debug("LiveKit Agents not installed, skipping instrumentation.")
+        except Exception as e:
+            logger.warning(f"Failed to instrument LiveKit Agents: {e}")
 
     def create_call(self, agent_id: str) -> Call:
         """
@@ -89,10 +102,10 @@ class Client:
             span.set_attribute("call.id", call.call_id)
             span.set_attribute("agent.id", call.agent_id)
 
-    def _instrument_libraries(self):
+    def _instrument_libraries(self, provider):
         """
-        Auto-instrument all installed OTel instrumentation packages.
-        This uses the standard 'opentelemetry_instrumentor' entry point.
+        Auto-instrument all installed OTel instrumentation packages
+        and specific integration for LiveKit Agents.
         """
         try:
             from importlib.metadata import entry_points
@@ -112,6 +125,9 @@ class Client:
             except Exception as e:
                 # Silently fail (debug log only)
                 logger.debug(f"Failed to instrument {entry_point.name}: {e}")
+        
+        # Manual instrumentation for LiveKit
+        self._instrument_livekit(provider)
 
 if __name__ == "__main__":
     # Configure logging to see output when running this script directly
