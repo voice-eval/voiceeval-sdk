@@ -1,7 +1,9 @@
 import os
 import logging
-from typing import Optional
+from typing import Optional, List, Callable, Sequence
 from voiceeval.models import Call
+from voiceeval.observability.exporters import PostProcessingSpanExporter, enforce_name_override
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -14,7 +16,7 @@ class Client:
     """
     Main entry point for the VoiceEval SDK.
     """
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://api.voiceeval.com/v1/traces"):
+    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://api.voiceeval.com/v1/traces", span_post_processors: Optional[List[Callable[[Sequence[ReadableSpan]], None]]] = None):
         self.api_key = api_key or os.environ.get("VOICE_EVAL_API_KEY")
         if not self.api_key:
             raise ValueError("API Key is required. Set VOICE_EVAL_API_KEY env var or pass in __init__.")
@@ -24,7 +26,7 @@ class Client:
         # Validate API Key
         self._validate_api_key()
         
-        self.enable_observability()
+        self.enable_observability(span_post_processors)
 
     def _validate_api_key(self):
         """Checks if the API key is valid by calling the server."""
@@ -60,13 +62,25 @@ class Client:
             logger.warning(f"Failed to reach VoiceEval server for validation: {e}")
 
 
-    def enable_observability(self):
+    def enable_observability(self, span_post_processors: Optional[List[Callable[[Sequence[ReadableSpan]], None]]] = None):
         """Auto-configures OTel to send data to VoiceEval Proxy and instruments common libraries."""
         provider = TracerProvider()
         exporter = OTLPSpanExporter(
             endpoint=self.ingest_url,
             headers={"Authorization": f"Bearer {self.api_key}"}
         )
+        
+        # Ensure enforce_name_override is always present
+        # We create a new list to avoid modifying the input in place if it's reused
+        processors = list(span_post_processors) if span_post_processors else []
+        
+        # Append to the END so it runs LAST.
+        # This ensures that even if user processors rename the span, our override functionality
+        # (which is an explicit instruction via the decorator) takes final precedence.
+        if enforce_name_override not in processors:
+            processors.append(enforce_name_override)
+            
+        exporter = PostProcessingSpanExporter(exporter, processors)
         
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)

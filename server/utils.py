@@ -1,49 +1,39 @@
-import secrets
-import hashlib
-import json
-from pathlib import Path
+import asyncio
+from .database import Database
+from .services import AuthService
 
-KEYS_FILE = Path(__file__).parent / "api_keys.json"
-
-def generate_key():
-    """Generates a secure random API key."""
-    return secrets.token_urlsafe(32)
-
-def hash_key(key: str) -> str:
-    """Hashes the API key using SHA-256."""
-    return hashlib.sha256(key.encode()).hexdigest()
-
-def add_key(langfuse_public: str, langfuse_secret: str, langfuse_host: str, api_key: str = None):
-    """Generates a new key (or uses provided), hashes it, and saves configuration."""
-    if not api_key:
-        api_key = generate_key()
-        print(f"Generated secure key: {api_key}")
-    else:
-        print(f"Using provided key: {api_key}")
-
-    key_hash = hash_key(api_key)
+async def manage_key_async(user_email: str, api_key: str = None, update: bool = False):
+    """
+    Generates a new key or updates an existing one (metadata only, no config for now).
+    """
+    Database.connect()
     
-    if KEYS_FILE.exists():
-        with open(KEYS_FILE, "r") as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                data = {}
-    else:
-        print(f"Creating new keys file at {KEYS_FILE}")
-        data = {}
-        
-    data[key_hash] = {
-        "langfuse_public": langfuse_public,
-        "langfuse_secret": langfuse_secret,
-        "langfuse_host": langfuse_host
-    }
+    config = {} # Config is now empty
     
-    with open(KEYS_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    try:
+        if update:
+            if not api_key:
+                print("ERROR: --key must be provided when using --update.")
+                return
+
+            # Currently nothing to update in config as it's empty, but keeping the call
+            success = await AuthService.update_api_key_config(api_key, config)
+            if success:
+                print(f"\nSUCCESS. API Key updated for user: {user_email}")
+            else:
+                print(f"\nERROR. API Key not found.")
+        else:
+            final_key = await AuthService.create_api_key(user_email, config, api_key)
+            
+            print(f"\nSUCCESS. API Key generated for user: {user_email}")
+            print("IMPORTANT: Ensure you have copied the key if it was generated.")
+            if not api_key:
+                print(f"Key: {final_key}")
         
-    print(f"\nSUCCESS. Key hashed and stored in {KEYS_FILE}")
-    print("IMPORTANT: Ensure you have copied the key if it was generated.")
+    except ValueError as e:
+        print(f"ERROR: {e}")
+    finally:
+        Database.close()
 
 if __name__ == "__main__":
     import argparse
@@ -52,16 +42,11 @@ if __name__ == "__main__":
     
     load_dotenv()
     
-    parser = argparse.ArgumentParser(description="Manage VoiceEval Server API Keys")
-    parser.add_argument("--public", default=os.getenv("LANGFUSE_PUBLIC_KEY"), help="Langfuse Public Key (defaults to env LANGFUSE_PUBLIC_KEY)")
-    parser.add_argument("--secret", default=os.getenv("LANGFUSE_SECRET_KEY"), help="Langfuse Secret Key (defaults to env LANGFUSE_SECRET_KEY)")
-    parser.add_argument("--host", default=os.getenv("LANGFUSE_HOST"), help="Langfuse Host (defaults to env LANGFUSE_HOST)")
+    parser = argparse.ArgumentParser(description="Manage VoiceEval Server API Keys (MongoDB)")
+    parser.add_argument("--email", required=True, help="User Email for Multi-tenancy")
     parser.add_argument("--key", help="Optional: Manually specify the API key instead of generating one.")
+    parser.add_argument("--update", action="store_true", help="Update configuration for the provided API key.")
     
     args = parser.parse_args()
     
-    if not all([args.public, args.secret, args.host]):
-        print("ERROR: Missing Langfuse credentials. Provide them via arguments or .env file.")
-        exit(1)
-        
-    add_key(args.public, args.secret, args.host, args.key)
+    asyncio.run(manage_key_async(args.email, args.key, args.update))
