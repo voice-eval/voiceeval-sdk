@@ -66,7 +66,14 @@ async def create_key(request: CreateKeyRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+@app.get("/v1/auth/validate")
+async def validate_key(ctx: KeyContext = Depends(get_key_context)):
+    """Validates the API key."""
+    return {"status": "valid", "tenant_email": ctx.tenant_email}
+
 @app.post("/v1/traces")
+
 async def ingest_traces(request: Request, ctx: KeyContext = Depends(get_key_context)):
     lf_public = os.getenv("LANGFUSE_PUBLIC_KEY")
     lf_secret = os.getenv("LANGFUSE_SECRET_KEY")
