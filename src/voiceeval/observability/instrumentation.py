@@ -3,6 +3,8 @@ import asyncio
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from voiceeval.context import ensure_call_metadata
+
 # Create a tracer for the library
 tracer = trace.get_tracer("voiceeval.sdk")
 
@@ -41,6 +43,7 @@ def observe(name_override=None, rename_parent=False):
         if asyncio.iscoroutinefunction(func):
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
+                call_meta = ensure_call_metadata()
                 should_rename = rename_parent
                 current_span = trace.get_current_span()
                 
@@ -57,12 +60,13 @@ def observe(name_override=None, rename_parent=False):
                     if current_span and current_span.is_recording():
                         current_span.update_name(name_override)
                         current_span.set_attribute("voiceeval.trace_name_override", name_override) # Persist override
-                        current_span.set_attribute("voiceeval.inputs", str(args)[:1000])
-                        current_span.set_attribute("voiceeval.kwargs", str(kwargs)[:1000])
+                        current_span.set_attribute("voiceeval.call_id", call_meta.call_id)
+                        current_span.set_attribute("voiceeval.inputs", str(args))
+                        current_span.set_attribute("voiceeval.kwargs", str(kwargs))
                         current_span.set_attribute("gen_ai.system", "voiceeval")
                         try:
                             result = await func(*args, **kwargs)
-                            current_span.set_attribute("voiceeval.output", str(result)[:1000])
+                            current_span.set_attribute("voiceeval.output", str(result))
                             return result
                         except Exception as e:
                             current_span.record_exception(e)
@@ -77,13 +81,14 @@ def observe(name_override=None, rename_parent=False):
                     if name_override:
                         span.set_attribute("voiceeval.trace_name_override", name_override)
                     try:
-                        span.set_attribute("voiceeval.inputs", str(args)[:1000])
-                        span.set_attribute("voiceeval.kwargs", str(kwargs)[:1000])
+                        span.set_attribute("voiceeval.call_id", call_meta.call_id)
+                        span.set_attribute("voiceeval.inputs", str(args))
+                        span.set_attribute("voiceeval.kwargs", str(kwargs))
                         span.set_attribute("gen_ai.system", "voiceeval")
                         
                         result = await func(*args, **kwargs)
                         
-                        span.set_attribute("voiceeval.output", str(result)[:1000])
+                        span.set_attribute("voiceeval.output", str(result))
                         return result
                     except Exception as e:
                         span.record_exception(e)
@@ -94,6 +99,7 @@ def observe(name_override=None, rename_parent=False):
             @wraps(func)
             @wraps(func)
             def sync_wrapper(*args, **kwargs):
+                call_meta = ensure_call_metadata()
                 should_rename = rename_parent
                 current_span = trace.get_current_span()
                 
@@ -108,12 +114,13 @@ def observe(name_override=None, rename_parent=False):
                     if current_span and current_span.is_recording():
                         current_span.update_name(name_override)
                         current_span.set_attribute("voiceeval.trace_name_override", name_override) # Persist override
-                        current_span.set_attribute("voiceeval.inputs", str(args)[:1000])
-                        current_span.set_attribute("voiceeval.kwargs", str(kwargs)[:1000])
+                        current_span.set_attribute("voiceeval.call_id", call_meta.call_id)
+                        current_span.set_attribute("voiceeval.inputs", str(args))
+                        current_span.set_attribute("voiceeval.kwargs", str(kwargs))
                         current_span.set_attribute("gen_ai.system", "voiceeval")
                         try:
                             result = func(*args, **kwargs)
-                            current_span.set_attribute("voiceeval.output", str(result)[:1000])
+                            current_span.set_attribute("voiceeval.output", str(result))
                             return result
                         except Exception as e:
                             current_span.record_exception(e)
@@ -128,13 +135,14 @@ def observe(name_override=None, rename_parent=False):
                     if name_override:
                         span.set_attribute("voiceeval.trace_name_override", name_override)
                     try:
-                        span.set_attribute("voiceeval.inputs", str(args)[:1000])
-                        span.set_attribute("voiceeval.kwargs", str(kwargs)[:1000])
+                        span.set_attribute("voiceeval.call_id", call_meta.call_id)
+                        span.set_attribute("voiceeval.inputs", str(args))
+                        span.set_attribute("voiceeval.kwargs", str(kwargs))
                         span.set_attribute("gen_ai.system", "voiceeval")
                         
                         result = func(*args, **kwargs)
                         
-                        span.set_attribute("voiceeval.output", str(result)[:1000])
+                        span.set_attribute("voiceeval.output", str(result))
                         return result
                     except Exception as e:
                         span.record_exception(e)
