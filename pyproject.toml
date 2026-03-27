@@ -1,9 +1,9 @@
 [project]
 name = "voiceeval-sdk"
-version = "0.1.7"
+version = "0.1.8"
 description = "Enterprise-grade Observability and Evaluation SDK for Voice Agents"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
     { name = "VoiceEval Team", email = "hello@voiceeval.com" },
@@ -12,22 +12,22 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 urls.Repository = "https://github.com/voiceeval/voiceeval-sdk"
 urls.Homepage = "https://voiceeval.com"
 dependencies = [
-    "httpx",
-    "openai",
-    "opentelemetry-api",
-    "opentelemetry-exporter-otlp",
-    "opentelemetry-instrumentation-anthropic",
-    "opentelemetry-instrumentation-google-generativeai",
-    "opentelemetry-instrumentation-openai",
-    "opentelemetry-sdk",
-    "pydantic",
-    "python-dotenv",
+    "httpx>=0.24.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+    "opentelemetry-instrumentation-anthropic>=0.40b0",
+    "opentelemetry-instrumentation-google-generativeai>=0.40b0",
+    "opentelemetry-instrumentation-openai>=0.40b0",
+    "opentelemetry-sdk>=1.20.0",
+    "pydantic>=2.0",
+    "python-dotenv>=0.20.0",
 ]
 
 [build-system]
