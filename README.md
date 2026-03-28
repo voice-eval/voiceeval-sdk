@@ -1,21 +1,19 @@
 # VoiceEval SDK (Python)
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-Native-purple)](https://opentelemetry.io/)
 
-**VoiceEval** is an enterprise-grade observability and evaluation SDK designed specifically for Voice Agents and LLM-powered applications. It provides detailed tracing, latency breakdown, and cost analysis with zero configuration.
+**VoiceEval** is an enterprise-grade observability and evaluation SDK for Voice Agents and LLM-powered applications. Built on OpenTelemetry, it provides zero-config auto-instrumentation with detailed tracing, latency breakdown, and cost analysis.
 
-## 🚀 Key Features
+## Key Features
 
-- **🔎 Zero-Config Auto-Instrumentation**: Automatically detects and traces calls from major LLM providers (OpenAI, Anthropic, Google Gemini) without any code changes.
-- **🛡️ Secure Ingestion Proxy**: All traces are sent through a secure proxy (`server/`), separating your application logic from downstream observability backends (like Langfuse). This ensures you maintain full control over your data and API keys.
-- **⚡ High Performance**: Built on top of `OpenTelemetry`, utilizing efficient asynchronous Batch exports (`OTLP/HTTP`) to ensure negligible runtime overhead.
-- **🧩 Standardized Data Model**: Uses standard OTel semantic conventions, making your data portable and interoperable with any OTel-compatible backend.
+- **Zero-Config Auto-Instrumentation**: Automatically traces calls from major LLM providers (OpenAI, Anthropic, Google Gemini) and LiveKit Agents — no code changes needed.
+- **LiveKit Native**: Automatically integrates with LiveKit's tracing infrastructure. Just initialize the Client and all agent spans are captured.
+- **Selective Monitoring**: Control which calls are traced with `auto_monitor`, `sample_rate`, `monitor_call()`, and `skip_call()`.
+- **High Performance**: Built on OpenTelemetry with async batch exports (OTLP/HTTP), ensuring negligible runtime overhead.
 
-## 📦 Installation
-
-Install the SDK via `pip` (or `uv`):
+## Installation
 
 ```bash
 pip install voiceeval-sdk
@@ -23,69 +21,143 @@ pip install voiceeval-sdk
 uv add voiceeval-sdk
 ```
 
-For local development:
-```bash
-git clone https://github.com/voiceeval/voiceeval-sdk.git
-cd voiceeval-sdk
-pip install -e .
-```
-
-## 🏁 Quickstart
+## Quickstart
 
 ### 1. Initialize the Client
 
-Initialize the `Client` at the start of your application. This single line sets up the OTel exporter and enables auto-instrumentation for all installed LLM libraries.
+Add a single `Client(...)` call at the top of your agent file. This sets up OTel tracing and auto-instruments all installed LLM libraries and LiveKit.
 
 ```python
 from voiceeval import Client
 
-# Initialize SDK - connects to your local proxy or prod endpoint
 client = Client(
-    api_key="your_voiceeval_api_key",  # or set VOICE_EVAL_API_KEY env var
-    base_url="http://api.voiceeval.com/v1/traces"
+    api_key="your_voiceeval_api_key",   # or set VOICE_EVAL_API_KEY env var
+    agent_name="my-booking-agent",      # identifies this agent in the dashboard
 )
 ```
 
-### 2. Run Your Agent
+That's it. No `@observe` decorator, no `client.flush()` — OTel flushes automatically on process exit.
 
-That's it! Any calls to supported libraries like `openai` or `anthropic` are now automatically traced.
+### 2. LiveKit Agent Example
 
 ```python
+from livekit.agents import Agent, AgentSession, JobContext, cli
+from voiceeval import Client
+
+# Initialize VoiceEval — auto-instruments all LLM calls and LiveKit spans
+client = Client(
+    api_key="your_voiceeval_api_key",
+    agent_name="my-booking-agent",
+)
+
+class MyAgent(Agent):
+    def __init__(self):
+        super().__init__(instructions="You are a helpful voice assistant.")
+
+@server.rtc_session(agent_name="my-agent")
+async def entrypoint(ctx: JobContext):
+    session = AgentSession(
+        stt=...,
+        llm=...,
+        tts=...,
+    )
+    await session.start(agent=MyAgent(), room=ctx.room)
+    await ctx.connect()
+```
+
+### 3. Standalone LLM Example
+
+Works without LiveKit too — any OpenAI/Anthropic/Gemini calls are automatically traced:
+
+```python
+from voiceeval import Client
 from openai import OpenAI
 
-# No manual wrapping needed!
-client_openai = OpenAI()
-response = client_openai.chat.completions.create(
+client = Client(api_key="your_voiceeval_api_key")
+
+openai_client = OpenAI()
+response = openai_client.chat.completions.create(
     model="gpt-4o",
     messages=[{"role": "user", "content": "Hello world"}]
 )
+# Trace is automatically captured and exported
 ```
 
-### 3. Manual Tracing (Optional)
+## Client Options
 
-For functions that don't call LLMs (like your business logic or RAG pipeline), use the `@observe` decorator:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | `str` | `VOICE_EVAL_API_KEY` env var | Your VoiceEval API key |
+| `base_url` | `str` | `https://api.voiceeval.com/v1/traces` | VoiceEval ingestion endpoint |
+| `agent_name` | `str` | `None` | Agent identifier shown in the dashboard |
+| `auto_monitor` | `bool` | `True` | Monitor all calls automatically |
+| `sample_rate` | `float` | `1.0` | Fraction of calls to monitor (0.0 to 1.0) |
+| `span_post_processors` | `list` | `None` | Custom span post-processing functions |
+
+## Selective Monitoring
+
+By default, every call is monitored. You can control this at the client level or per-call.
+
+### Sample a fraction of calls
+
+```python
+client = Client(
+    api_key="your_key",
+    sample_rate=0.1,  # Monitor 10% of calls
+)
+```
+
+### Manual opt-in mode
+
+```python
+from voiceeval import Client, monitor_call, skip_call
+
+client = Client(
+    api_key="your_key",
+    auto_monitor=False,  # Don't monitor by default
+)
+
+# In your call handler, explicitly opt in:
+monitor_call()  # This call will be traced and evaluated
+```
+
+### Per-call opt-out
+
+```python
+from voiceeval import skip_call
+
+# In your call handler:
+skip_call()  # This specific call won't be monitored
+```
+
+When a call is skipped, spans still flow to Langfuse (for the dashboard) but won't create backend records or trigger evaluations.
+
+## Manual Tracing (Optional)
+
+For non-LLM functions like business logic or RAG pipelines, use the `@observe` decorator:
 
 ```python
 from voiceeval import observe
 
 @observe(name_override="rag_retrieval")
 def retrieve_documents(query: str):
-    # Your complex logic here
+    # Your logic here
     return docs
 ```
 
-## 🔌 Supported Providers
+## Supported Providers
 
-The SDK automatically instruments the following libraries if they are found in your environment:
+The SDK automatically instruments these libraries when installed:
 
 | Provider | Library | Status |
-| :--- | :--- | :--- |
-| **OpenAI** | `openai` | ✅ Auto-Instrumented |
-| **Anthropic** | `anthropic` | ✅ Auto-Instrumented |
-| **Google Gemini** | `google-generativeai` | ✅ Auto-Instrumented |
+|----------|---------|--------|
+| **OpenAI** | `openai` | Auto-Instrumented |
+| **Anthropic** | `anthropic` | Auto-Instrumented |
+| **Google Gemini** | `google-generativeai` | Auto-Instrumented |
+| **LiveKit Agents** | `livekit-agents` | Auto-Instrumented |
 
-*Note: If a library is not installed, the SDK gracefully skips it.*
+Uninstalled libraries are silently skipped.
 
-## 📄 License
+## License
 
 MIT
