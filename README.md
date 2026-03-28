@@ -96,41 +96,61 @@ response = openai_client.chat.completions.create(
 
 ## Selective Monitoring
 
-By default, every call is monitored. You can control this at the client level or per-call.
+By default, every call is monitored (`auto_monitor=True`). You can control this at the client level or per-call.
 
 ### Sample a fraction of calls
 
 ```python
 client = Client(
     api_key="your_key",
-    sample_rate=0.1,  # Monitor 10% of calls
+    sample_rate=0.1,  # Randomly monitor 10% of calls
 )
 ```
 
-### Manual opt-in mode
+### Skip specific calls (`auto_monitor=True`)
+
+With the default `auto_monitor=True`, all calls are monitored. Use `skip_call()` inside your session handler to opt out a specific call:
 
 ```python
-from voiceeval import Client, monitor_call, skip_call
+from voiceeval import Client, skip_call
+
+client = Client(api_key="your_key")  # auto_monitor=True by default
+
+@server.rtc_session(agent_name="my-agent")
+async def entrypoint(ctx: JobContext):
+    # Decide based on room metadata, participant info, etc.
+    if ctx.room.name.startswith("internal-"):
+        skip_call()  # This call won't be monitored or evaluated
+
+    session = AgentSession(stt=..., llm=..., tts=...)
+    await session.start(agent=MyAgent(), room=ctx.room)
+    await ctx.connect()
+```
+
+### Monitor specific calls (`auto_monitor=False`)
+
+With `auto_monitor=False`, no calls are monitored unless you explicitly opt in with `monitor_call()`:
+
+```python
+from voiceeval import Client, monitor_call
 
 client = Client(
     api_key="your_key",
-    auto_monitor=False,  # Don't monitor by default
+    auto_monitor=False,  # Nothing monitored by default
 )
 
-# In your call handler, explicitly opt in:
-monitor_call()  # This call will be traced and evaluated
+@server.rtc_session(agent_name="my-agent")
+async def entrypoint(ctx: JobContext):
+    # Only monitor production calls, not test rooms
+    if not ctx.room.name.startswith("test-"):
+        monitor_call()  # This call will be traced and evaluated
+
+    session = AgentSession(stt=..., llm=..., tts=...)
+    await session.start(agent=MyAgent(), room=ctx.room)
+    await ctx.connect()
 ```
 
-### Per-call opt-out
-
-```python
-from voiceeval import skip_call
-
-# In your call handler:
-skip_call()  # This specific call won't be monitored
-```
-
-When a call is skipped, spans still flow to Langfuse (for the dashboard) but won't create backend records or trigger evaluations.
+When a call is skipped (or not opted in), spans still flow to Langfuse for the dashboard but won't create backend records or trigger evaluations.
 
 ## Manual Tracing (Optional)
 
@@ -144,19 +164,6 @@ def retrieve_documents(query: str):
     # Your logic here
     return docs
 ```
-
-## Supported Providers
-
-The SDK automatically instruments these libraries when installed:
-
-| Provider | Library | Status |
-|----------|---------|--------|
-| **OpenAI** | `openai` | Auto-Instrumented |
-| **Anthropic** | `anthropic` | Auto-Instrumented |
-| **Google Gemini** | `google-generativeai` | Auto-Instrumented |
-| **LiveKit Agents** | `livekit-agents` | Auto-Instrumented |
-
-Uninstalled libraries are silently skipped.
 
 ## License
 
