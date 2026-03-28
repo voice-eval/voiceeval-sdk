@@ -56,11 +56,20 @@ src/voiceeval/
 - **`flush()`**: Force-flushes the TracerProvider (OTel auto-flushes on exit via atexit handler, so flush() is only needed mid-execution)
 
 ### CallIdSpanProcessor (`observability/processor.py`)
-The primary mechanism for trace linkage. Runs on every span start:
+The primary mechanism for trace linkage:
+
+**`on_start`** — runs on every span:
 - **Root span detection**: When span name is `"job_entrypoint"` or `"job entrypoint"`, generates a fresh `call_id` UUID and stores in contextvar
-- **Child spans**: Reuse the `call_id` from the current context
+- **Child spans**: Reuse the `call_id` from the current context. Checks `is_monitoring_skipped()` on every child span — once skipped, stops tagging new spans.
 - **Attributes injected**: `voiceeval.call_id`, `voiceeval.agent_name`, `gen_ai.system = "voiceeval"`
 - **Selective monitoring**: Respects `auto_monitor`, `sample_rate`, `monitor_call()`, and `skip_call()` settings
+
+**`on_end` reconciliation** — runs on root spans only:
+- Solves the LiveKit timing problem: `job_entrypoint` span starts BEFORE the user's `@server.rtc_session` handler runs, so `skip_call()`/`monitor_call()` are always called AFTER root span attributes are set.
+- Root span's `on_end` fires after the handler completes, so it sees the final monitoring decision.
+- **skip_call() after root tagged**: Strips `voiceeval.call_id`, `voiceeval.agent_name`, `gen_ai.system` from root span attributes.
+- **monitor_call() after root skipped**: Adds `voiceeval.call_id`, `gen_ai.system`, and optionally `voiceeval.agent_name` to root span.
+- Uses `span._attributes = types.MappingProxyType(...)` to mutate read-only span attributes (same pattern as `enforce_name_override`'s `span._name` hack in exporters.py).
 
 ### Call Context (`context.py`)
 - Uses `contextvars.ContextVar` for task-local storage
