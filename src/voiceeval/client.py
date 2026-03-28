@@ -127,8 +127,10 @@ class Client:
                 if not instrumentor.is_instrumented_by_opentelemetry:
                     instrumentor.instrument()
                     logger.debug(f"Instrumented: {entry_point.name}")
+            except ImportError:
+                logger.debug(f"{entry_point.name} not installed, skipping.")
             except Exception as e:
-                logger.debug(f"Failed to instrument {entry_point.name}: {e}")
+                logger.debug(f"Could not instrument {entry_point.name}: {e}")
 
         self._instrument_livekit(provider)
 
