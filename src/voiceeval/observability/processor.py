@@ -10,6 +10,7 @@ without needing to use the @observe decorator.
 """
 
 import logging
+import types
 from typing import Optional
 
 from opentelemetry.context import Context
@@ -80,6 +81,12 @@ class CallIdSpanProcessor(SpanProcessor):
                 set_call_metadata(None)  # type: ignore[arg-type]
                 return
 
+        # Check skip_call() on every span — it may be called after the root
+        # span started (e.g. inside a LiveKit session handler that runs after
+        # job_entrypoint). Once skipped, stop tagging new spans.
+        if is_monitoring_skipped():
+            return
+
         # Get or create metadata for this context
         from voiceeval.context import get_call_metadata
         meta = get_call_metadata()
@@ -99,7 +106,55 @@ class CallIdSpanProcessor(SpanProcessor):
             span.set_attribute("voiceeval.agent_name", self._agent_name)
 
     def on_end(self, span) -> None:
-        pass
+        """Reconcile monitoring state on root spans.
+
+        skip_call() or monitor_call() may be called AFTER the root span's
+        on_start — LiveKit creates job_entrypoint before the user's session
+        handler runs.  on_end fires after the handler completes, so we see
+        the final monitoring decision and can fix up the root span before
+        BatchSpanProcessor queues it for export.
+        """
+        if span.name not in _ROOT_SPAN_NAMES:
+            return
+
+        has_call_id = span.attributes.get("voiceeval.call_id") is not None
+
+        if has_call_id and is_monitoring_skipped():
+            # skip_call() was called after root span was tagged — strip attrs
+            self._update_span_attributes(span, remove_keys=(
+                "voiceeval.call_id", "voiceeval.agent_name", "gen_ai.system",
+            ))
+        elif not has_call_id and not is_monitoring_skipped():
+            # monitor_call() was called after root span was skipped — add attrs
+            from voiceeval.context import get_call_metadata
+            meta = get_call_metadata()
+            if meta:
+                add_attrs = {
+                    "voiceeval.call_id": meta.call_id,
+                    "gen_ai.system": "voiceeval",
+                }
+                if self._agent_name:
+                    add_attrs["voiceeval.agent_name"] = self._agent_name
+                self._update_span_attributes(span, add_attrs=add_attrs)
+
+    @staticmethod
+    def _update_span_attributes(span, remove_keys=(), add_attrs=None):
+        """Modify span attributes after span has ended.
+
+        Uses internal _attributes access — same pattern as
+        enforce_name_override's span._name mutation in exporters.py.
+        """
+        try:
+            current = dict(span.attributes)
+            for key in remove_keys:
+                current.pop(key, None)
+            if add_attrs:
+                current.update(add_attrs)
+            span._attributes = types.MappingProxyType(current)
+        except (AttributeError, TypeError):
+            logger.debug(
+                "Could not reconcile span attributes for selective monitoring"
+            )
 
     def shutdown(self) -> None:
         pass

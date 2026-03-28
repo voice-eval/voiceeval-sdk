@@ -36,8 +36,6 @@ client = Client(
 )
 ```
 
-That's it. No `@observe` decorator, no `client.flush()` — OTel flushes automatically on process exit.
-
 ### 2. LiveKit Agent Example
 
 ```python
@@ -102,19 +100,23 @@ By default, every call is monitored (`auto_monitor=True`). You can control this 
 
 ```python
 client = Client(
-    api_key="your_key",
+    api_key="your_voiceeval_api_key",
+    agent_name="my-booking-agent",
     sample_rate=0.1,  # Randomly monitor 10% of calls
 )
 ```
 
-### Skip specific calls (`auto_monitor=True`)
+### Skip specific calls
 
 With the default `auto_monitor=True`, all calls are monitored. Use `skip_call()` inside your session handler to opt out a specific call:
 
 ```python
 from voiceeval import Client, skip_call
 
-client = Client(api_key="your_key")  # auto_monitor=True by default
+client = Client(
+    api_key="your_voiceeval_api_key",
+    agent_name="my-booking-agent",
+)
 
 @server.rtc_session(agent_name="my-agent")
 async def entrypoint(ctx: JobContext):
@@ -127,16 +129,17 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
 ```
 
-### Monitor specific calls (`auto_monitor=False`)
+### Monitor only specific calls
 
-With `auto_monitor=False`, no calls are monitored unless you explicitly opt in with `monitor_call()`:
+Set `auto_monitor=False` so no calls are monitored by default, then use `monitor_call()` to opt in:
 
 ```python
 from voiceeval import Client, monitor_call
 
 client = Client(
-    api_key="your_key",
-    auto_monitor=False,  # Nothing monitored by default
+    api_key="your_voiceeval_api_key",
+    agent_name="my-booking-agent",
+    auto_monitor=False,
 )
 
 @server.rtc_session(agent_name="my-agent")
