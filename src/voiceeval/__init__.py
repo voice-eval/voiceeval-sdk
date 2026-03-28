@@ -1,7 +1,13 @@
 from voiceeval.client import Client
 from voiceeval.models import Call, Transcript, Span
 from voiceeval.observability import observe
-from voiceeval.context import CallMetadata, get_call_id, get_call_metadata
+from voiceeval.context import (
+    CallMetadata,
+    get_call_id,
+    get_call_metadata,
+    monitor_call,
+    skip_call,
+)
 
 __all__ = [
     "Client",
@@ -12,4 +18,6 @@ __all__ = [
     "CallMetadata",
     "get_call_id",
     "get_call_metadata",
+    "monitor_call",
+    "skip_call",
 ]

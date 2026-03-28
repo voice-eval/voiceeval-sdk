@@ -3,6 +3,7 @@ import logging
 from typing import Optional, List, Callable, Sequence
 from voiceeval.models import Call
 from voiceeval.observability.exporters import PostProcessingSpanExporter, enforce_name_override
+from voiceeval.observability.processor import CallIdSpanProcessor
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -15,37 +16,47 @@ logger = logging.getLogger(__name__)
 class Client:
     """
     Main entry point for the VoiceEval SDK.
+
+    Minimal setup::
+
+        from voiceeval import Client
+        client = Client(api_key="ve_xxx", agent_name="my-booking-agent")
+
+    All LLM calls and LiveKit spans are automatically traced and exported.
+    No ``@observe`` decorator or ``client.flush()`` required — OTel flushes
+    on process exit automatically.
     """
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://api.voiceeval.com/v1/traces", span_post_processors: Optional[List[Callable[[Sequence[ReadableSpan]], None]]] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: str = "https://api.voiceeval.com/v1/traces",
+        agent_name: Optional[str] = None,
+        auto_monitor: bool = True,
+        sample_rate: float = 1.0,
+        span_post_processors: Optional[List[Callable[[Sequence[ReadableSpan]], None]]] = None,
+    ):
         self.api_key = api_key or os.environ.get("VOICE_EVAL_API_KEY")
         if not self.api_key:
             raise ValueError("API Key is required. Set VOICE_EVAL_API_KEY env var or pass in __init__.")
-            
+
         self.ingest_url = base_url
-        
-        # Validate API Key
+        self.agent_name = agent_name
+        self.auto_monitor = auto_monitor
+        self.sample_rate = sample_rate
+
         self._validate_api_key()
-        
         self.enable_observability(span_post_processors)
 
     def _validate_api_key(self):
         """Checks if the API key is valid by calling the server."""
-        # Assume base_url ends with /v1/traces or similar
-        # Construct validation URL: replace /traces with /auth/validate, or just appending to root
-        # Ideally, we'd have a clean base URL. For now, hacky replacement to match default behaviour.
-        
         if "/v1/traces" in self.ingest_url:
             validate_url = self.ingest_url.replace("/v1/traces", "/v1/auth/validate")
         else:
-            # Fallback or smart guess? 
-            # If user passes just http://localhost:8000, we might need /v1/auth/validate
-            # If user passes http://localhost:8000/v1, we need /auth/validate
-            # For this task, let's assume the standard structure.
-             validate_url = self.ingest_url.replace("/traces", "/auth/validate") # Attempt to handle /v1/traces -> /v1/auth/validate
+            validate_url = self.ingest_url.replace("/traces", "/auth/validate")
 
         try:
             response = httpx.get(
-                validate_url, 
+                validate_url,
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=5.0
             )
@@ -56,42 +67,41 @@ class Client:
             elif response.status_code != 200:
                 logger.warning(f"Could not validate API key (Status {response.status_code}). Proceeding, but exports may fail.")
         except Exception as e:
-            # Don't crash for network errors, just warn, unless it's explicitly Invalid API Key error raised above
             if "Invalid API Key" in str(e):
                 raise e
             logger.warning(f"Failed to reach VoiceEval server for validation: {e}")
 
-
     def enable_observability(self, span_post_processors: Optional[List[Callable[[Sequence[ReadableSpan]], None]]] = None):
-        """Auto-configures OTel to send data to VoiceEval Proxy and instruments common libraries."""
+        """Auto-configures OTel to send data to VoiceEval and instruments common libraries."""
+        # shutdown_on_exit=True (default) registers atexit handler — auto-flush on exit
         provider = TracerProvider()
+
+        # CallIdSpanProcessor runs FIRST on every span start — attaches call_id + agent_name
+        provider.add_span_processor(
+            CallIdSpanProcessor(
+                agent_name=self.agent_name,
+                auto_monitor=self.auto_monitor,
+                sample_rate=self.sample_rate,
+            )
+        )
+
         exporter = OTLPSpanExporter(
             endpoint=self.ingest_url,
             headers={"Authorization": f"Bearer {self.api_key}"}
         )
-        
-        # Ensure enforce_name_override is always present
-        # We create a new list to avoid modifying the input in place if it's reused
-        processors = list(span_post_processors) if span_post_processors else []
-        
-        # Append to the END so it runs LAST.
-        # This ensures that even if user processors rename the span, our override functionality
-        # (which is an explicit instruction via the decorator) takes final precedence.
-        if enforce_name_override not in processors:
-            processors.append(enforce_name_override)
-            
-        exporter = PostProcessingSpanExporter(exporter, processors)
-        
+
+        post_processors = list(span_post_processors) if span_post_processors else []
+        if enforce_name_override not in post_processors:
+            post_processors.append(enforce_name_override)
+
+        exporter = PostProcessingSpanExporter(exporter, post_processors)
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
-        
-        # Instrument all libraries (including LiveKit)
+
         self._instrument_libraries(provider)
 
     def _instrument_livekit(self, provider):
-        """
-        Attempts to configure LiveKit Agents to use the same TracerProvider.
-        """
+        """Attempts to configure LiveKit Agents to use the same TracerProvider."""
         try:
             from livekit.agents import telemetry
             telemetry.set_tracer_provider(provider)
@@ -101,35 +111,16 @@ class Client:
         except Exception as e:
             logger.warning(f"Failed to instrument LiveKit Agents: {e}")
 
-    def create_call(self, agent_id: str) -> Call:
-        """
-        Initialize a tracking object for a new call.
-        """
-        raise NotImplementedError("create_call is not implemented yet")
-
-    def log_call(self, call: Call) -> None:
-        """
-        Log a completed call to the platform.
-        """
-        tracer = trace.get_tracer("voiceeval.sdk")
-        with tracer.start_as_current_span("log_call") as span:
-            span.set_attribute("call.id", call.call_id)
-            span.set_attribute("agent.id", call.agent_id)
-
     def _instrument_libraries(self, provider):
-        """
-        Auto-instrument all installed OTel instrumentation packages
-        and specific integration for LiveKit Agents.
-        """
+        """Auto-instrument all installed OTel instrumentation packages and LiveKit."""
         try:
             from importlib.metadata import entry_points
         except ImportError:
             return
 
         logger.debug("Auto-instrumenting installed libraries...")
-        # Python 3.10+ supports filtering by group
         eps = entry_points(group="opentelemetry_instrumentor")
-        
+
         for entry_point in eps:
             try:
                 instrumentor = entry_point.load()()
@@ -137,29 +128,17 @@ class Client:
                     instrumentor.instrument()
                     logger.debug(f"Instrumented: {entry_point.name}")
             except Exception as e:
-                # Silently fail (debug log only)
                 logger.debug(f"Failed to instrument {entry_point.name}: {e}")
-        
-        # Manual instrumentation for LiveKit
+
         self._instrument_livekit(provider)
 
     def flush(self):
-        """
-        Force flush all buffered traces to the backend.
-        Useful for ensuring data is sent before application shutdown.
+        """Force flush all buffered traces to the backend.
+
+        Note: OTel automatically flushes on process exit (via atexit handler).
+        You only need to call this if you want to force an immediate flush
+        mid-execution.
         """
         provider = trace.get_tracer_provider()
         if hasattr(provider, "force_flush"):
             provider.force_flush()
-
-if __name__ == "__main__":
-    # Configure logging to see output when running this script directly
-    # logging.basicConfig(level=logging.DEBUG)
-    
-    # Client() automatically enables observability and instruments libraries
-    # Using a dummy key for testing initialization
-    try:
-        client = Client(api_key="test_key")
-        print("Client initialized and libraries instrumented.")
-    except Exception as e:
-        print(f"Initialization failed: {e}")
